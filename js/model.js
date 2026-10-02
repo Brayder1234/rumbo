@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS = {
   alarms: true,           // sonar al empezar cada bloque
   notifyBefore: 10,       // aviso previo en minutos (0 = no)
   askDone: true,          // preguntar al terminar si se cumplió
+  autoAdd: true,          // lo dictado se agenda solo, sin confirmar
 };
 
 export function newState() {

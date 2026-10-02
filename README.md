@@ -7,7 +7,7 @@ App web instalable (PWA), sin dependencias ni servidor. Tus datos se guardan sol
 
 - **Hoy:** tu día en una barra de 24 h, lo que toca ahora, lo que sigue, pendientes y "¿lo cumpliste?".
 - **Semana:** las 24 h de cada día. Dos modos: *Esta semana* (cambios solo para esa fecha) y *Plantilla* (tu semana normal, que se copia a cada semana nueva).
-- **Secretaria (sin IA todavía):** escribes o dictas "ir al súper hoy, no hay comida, una hora" y entiende la tarea, la duración, la fecha, la hora exacta, la prioridad y el área. El motor busca tiempo libre; si no hay, usa el colchón (Flexible) o mueve cosas de menor prioridad a otro hueco. Nunca toca lo Fijo, lo de igual o más prioridad, ni el sueño. Siempre pide confirmación y se puede deshacer.
+- **Secretaria (sin IA todavía):** escribes o dictas "ir al súper hoy, no hay comida, una hora" y entiende la tarea, la duración, la fecha, la hora exacta, la prioridad y el área. El motor busca tiempo libre; si no hay, usa el colchón (Flexible) o mueve cosas de menor prioridad a otro hueco. Nunca toca lo Fijo, lo de igual o más prioridad, ni el sueño. Lo dictado por voz se agenda solo, sin confirmar (se puede apagar en Ajustes) y queda un aviso con Deshacer; lo escrito a mano sí muestra la propuesta antes de confirmar.
 - **Prioridades:** Fijo, Alta, Media, Baja y Flexible. Un bloque que se mueve dos veces sube a Alta.
 - **Sueño:** la hora de levantarte es fija y la de acostarte se calcula con tu meta; desconexión antes de dormir; registro de noches con promedio y deuda de sueño.
 - **Alarmas:** Fijo y Alta suenan en pantalla completa hasta que respondas (Empezar, Posponer 10 min, Moverlo). Media: aviso con sonido. 4 tonos. Notificaciones del sistema si las activas.

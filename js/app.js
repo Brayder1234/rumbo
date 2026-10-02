@@ -70,7 +70,7 @@ function toast(msg, action) {
   const box = $('#toast');
   clearTimeout(toastTimer);
   box.innerHTML = `<div class="msg"><span>${esc(msg)}</span>${action ? `<button type="button" data-act="${action.act}" ${action.data || ''}>${esc(action.label)}</button>` : ''}</div>`;
-  toastTimer = setTimeout(() => (box.innerHTML = ''), action ? 7000 : 3500);
+  toastTimer = setTimeout(() => (box.innerHTML = ''), action ? 9000 : 3500);
 }
 
 function changed() {
@@ -479,6 +479,13 @@ function viewAjustes() {
   </section>
 
   <section class="section">
+    <p class="label">Secretaria</p>
+    <div class="card">
+      ${sw('autoAdd', 'Agregar sin confirmar lo que dicto', 'Al terminar de hablar se agenda sola y te avisa qué hizo. Si algo queda mal, tócalo y lo cambias, o usa Deshacer.')}
+    </div>
+  </section>
+
+  <section class="section">
     <p class="label">Alarmas</p>
     <div class="card">
       ${sw('alarms', 'Sonar al empezar cada bloque', 'Fijo y Alta: alarma que suena hasta que respondas. Media: un aviso con sonido. Baja y Flexible: sin sonido.')}
@@ -847,6 +854,29 @@ function addToInbox(task) {
   toast('Guardado en pendientes.');
 }
 
+// Agenda lo dictado sin pedir confirmación. Avisa qué hizo y deja "Deshacer".
+function autoAdd(text) {
+  const r = parseTask(text, todayKey());
+  if (!r.title) return openNewTask(text);
+  const task = { title: r.title, duration: r.duration, due: r.due, at: r.at, priority: r.priority, area: r.area };
+  const p = propose(st(), task, now());
+  store.snapshot();
+  if (!p.ok) {
+    st().tasks.push({ id: T.uid(), ...task, created: todayKey() });
+    changed();
+    return toast(`No encontré lugar para "${task.title}". Lo dejé en pendientes.`, { act: 'undo', label: 'Deshacer' });
+  }
+  applyProposal(st(), p, todayKey());
+  changed();
+  const moved = p.changes.filter((c) => c.type === 'move').length;
+  const unplaced = p.changes.filter((c) => c.type === 'unplaced').length;
+  let msg = `Agendado: ${task.title}, ${T.relDay(p.slot.key, todayKey())} ${T.fmt(p.slot.start)} – ${T.fmt(p.slot.end)}`;
+  if (moved) msg += ` · moví ${moved} ${moved === 1 ? 'bloque' : 'bloques'}`;
+  if (unplaced) msg += ` · ${unplaced} a pendientes`;
+  if (p.note) msg += ' · esa hora no estaba libre';
+  toast(`${msg}.`, { act: 'undo', label: 'Deshacer' });
+}
+
 // ---------- escuchar (dictado) ----------
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -878,8 +908,9 @@ function startListening() {
     ui.listening = null;
     overlay.innerHTML = '';
     if (!l || l.cancelled) return;
-    if (l.text.trim()) openNewTask(l.text.trim());
-    else openNewTask('', l.error || 'No te escuché. Escríbelo o intenta otra vez.');
+    if (!l.text.trim()) openNewTask('', l.error || 'No te escuché. Escríbelo o intenta otra vez.');
+    else if (st().settings.autoAdd) autoAdd(l.text.trim());
+    else openNewTask(l.text.trim());
   };
   try {
     rec.start();
