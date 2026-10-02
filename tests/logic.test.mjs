@@ -2,8 +2,8 @@
 // Correr con: node tests/logic.test.mjs
 import assert from 'node:assert/strict';
 import { newState, exampleTemplate, sleepInfo, sleepBlocks, dayBlocks } from '../js/model.js';
-import { propose, applyProposal, freeGaps } from '../js/scheduler.js';
-import { parseTask, parseDuration, parseTime, parseDate } from '../js/parser.js';
+import { propose, applyProposal, freeGaps, addRecurring } from '../js/scheduler.js';
+import { parseTask, parseTasks, splitTasks, parseRepeat, parseDuration, parseTime, parseDate } from '../js/parser.js';
 import { toMin, fmt, dur, weekday } from '../js/time.js';
 
 let passed = 0;
@@ -203,6 +203,88 @@ test('frase de video', () => {
   assert.equal(r.duration, 120);
   assert.equal(r.due, '2026-10-07');
   assert.equal(r.title, 'Grabar el video de trascendencia');
+});
+
+// ---------- repeticiones ----------
+test('parseRepeat', () => {
+  assert.deepEqual(parseRepeat('todos los domingos tengo partido de futbol'), [6]);
+  assert.deepEqual(parseRepeat('los lunes y miercoles gimnasio'), [0, 2]);
+  assert.deepEqual(parseRepeat('de lunes a viernes'), [0, 1, 2, 3, 4]);
+  assert.deepEqual(parseRepeat('entre semana'), [0, 1, 2, 3, 4]);
+  assert.deepEqual(parseRepeat('los fines de semana'), [5, 6]);
+  assert.deepEqual(parseRepeat('todos los dias'), [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(parseRepeat('el jueves dentista'), null);
+});
+test('todos los domingos partido de fútbol', () => {
+  const r = parseTask('Todos los domingos tengo partido de fútbol', TUE);
+  assert.deepEqual(r.repeat, [6]);
+  assert.equal(r.title, 'Partido de fútbol');
+  assert.equal(r.area, 'futbol');
+  assert.equal(r.priority, 'fijo');
+  assert.equal(r.duration, 120);
+  assert.equal(r.at, null);
+  assert.equal(r.due, null);
+});
+test('los lunes y miércoles gimnasio a las 6 de la mañana', () => {
+  const r = parseTask('Los lunes y miércoles tengo gimnasio a las 6 de la mañana', TUE);
+  assert.deepEqual(r.repeat, [0, 2]);
+  assert.equal(r.title, 'Gimnasio');
+  assert.equal(r.at, H('06:00'));
+});
+
+// ---------- varias tareas ----------
+test('una sola tarea con frases de apoyo no se parte', () => {
+  const t = splitTasks('Tengo que ir al súper hoy, no hay comida. Me toma como una hora.');
+  assert.equal(t.length, 1);
+});
+test('"pan y leche" no se parte, "comprar y llamar" sí', () => {
+  assert.equal(splitTasks('comprar pan y leche').length, 1);
+  assert.equal(splitTasks('comprar pan y llamar a mi mamá').length, 2);
+});
+test('varias tareas: heredan la fecha y respetan la suya', () => {
+  const r = parseTasks('Mañana tengo que ir al banco y comprar pan y leche, y el viernes dentista a las 3', TUE);
+  assert.equal(r.length, 3);
+  assert.deepEqual(r.map((x) => x.title), ['Ir al banco', 'Comprar pan y leche', 'Dentista']);
+  assert.equal(r[0].due, '2026-10-07');
+  assert.equal(r[1].due, '2026-10-07');
+  assert.equal(r[2].due, '2026-10-09');
+  assert.equal(r[2].at, H('15:00'));
+});
+test('tareas sueltas y una repetida en la misma frase', () => {
+  const r = parseTasks('Hoy tengo que llamar al banco. Todos los domingos tengo partido de fútbol', TUE);
+  assert.equal(r.length, 2);
+  assert.equal(r[0].due, TUE);
+  assert.deepEqual(r[1].repeat, [6]);
+});
+
+test('addRecurring: fútbol los domingos sin hora → primer hueco desde las 8:00', () => {
+  const s = demo();
+  const r = parseTask('Todos los domingos tengo partido de fútbol', TUE);
+  const res = addRecurring(s, r, r.repeat, { key: TUE, min: H('14:20') });
+  assert.equal(res.added.length, 1);
+  assert.equal(res.guessed, true);
+  assert.equal(res.added[0].start, H('08:00'));
+  assert.ok(s.template[6].some((b) => b.title === 'Partido de fútbol' && b.priority === 'fijo' && b.end - b.start === 120));
+});
+test('addRecurring: choca con algo Fijo → no lo pisa y lo dice', () => {
+  const s = demo();
+  const res = addRecurring(s, { title: 'Otro', area: 'futbol', priority: 'fijo', duration: 60, at: H('08:30') }, [5], { key: TUE, min: 0 });
+  assert.equal(res.added.length, 0);
+  assert.match(res.skipped[0].reason, /Fútbol/);
+});
+test('addRecurring: recorta lo de menor prioridad y lo avisa', () => {
+  const s = demo();
+  const res = addRecurring(s, { title: 'Reunión', area: 'personal', priority: 'fijo', duration: 60, at: H('17:30') }, [0], { key: TUE, min: 0 });
+  assert.equal(res.added.length, 1);
+  assert.equal(res.cut[0].title, 'Colchón: lo que surgió');
+  assert.ok(!s.template[0].some((b) => b.title.startsWith('Colchón')));
+});
+test('addRecurring: también llega a días futuros que ya tenían cambios propios', () => {
+  const s = demo();
+  const SUN = '2026-10-11';
+  s.plan[SUN] = dayBlocks(s, SUN).map((b) => ({ ...b }));
+  addRecurring(s, { title: 'Partido de fútbol', area: 'futbol', priority: 'fijo', duration: 120, at: H('09:00') }, [6], { key: TUE, min: H('14:20') });
+  assert.ok(s.plan[SUN].some((b) => b.title === 'Partido de fútbol'));
 });
 
 console.log(`${passed} pruebas pasaron${process.exitCode ? ' (con fallas arriba)' : ''}`);

@@ -277,3 +277,59 @@ export function applyProposal(state, p, todayKey) {
   state.stats.scheduled = (state.stats.scheduled || 0) + 1;
   state.stats.moved = (state.stats.moved || 0) + p.changes.filter((c) => c.type === 'move').length;
 }
+
+/**
+ * Agrega una tarea que se repite (ej. todos los domingos) a la plantilla semanal,
+ * y a las fechas futuras que ya tengan cambios propios. No pisa lo de igual o mayor
+ * prioridad; lo de menor prioridad que estorbe se recorta.
+ * Si no trae hora, busca el primer hueco libre del día (desde las 8:00).
+ */
+export function addRecurring(state, task, days, now) {
+  const dur = Math.max(5, Math.round(task.duration || 60));
+  const rank = RANK[task.priority] ?? 4;
+  const res = { added: [], skipped: [], cut: [], guessed: task.at == null };
+
+  const place = (list, start, end, wd, record) => {
+    const hits = list.filter((b) => b.start < end && b.end > start);
+    const blocked = hits.find((b) => (RANK[b.priority] ?? 2) >= rank);
+    if (blocked) return { ok: false, reason: `choca con "${blocked.title}"` };
+    for (const b of hits) {
+      if (record) res.cut.push({ wd, title: b.title });
+      cut(list, b, start, end);
+    }
+    list.push({ id: uid(), start, end, area: task.area || 'personal', title: task.title, priority: task.priority || 'fijo', done: null, moves: 0, source: 'secretaria' });
+    sortDay(list);
+    return { ok: true };
+  };
+
+  for (const wd of days) {
+    const [ws, we] = awakeWindow(state.settings, wd);
+    const list = state.template[wd];
+    let start = task.at;
+    if (start == null) {
+      const fit = (from) => freeGaps(list, ws, we, from).find((g) => roundUp(g.start, 5) + dur <= g.end);
+      const g = fit(Math.max(ws, 480)) || fit(ws);
+      if (!g) {
+        res.skipped.push({ wd, reason: 'no hay un hueco libre' });
+        continue;
+      }
+      start = roundUp(g.start, 5);
+    }
+    const end = start + dur;
+    if (start < ws || end > we) {
+      res.skipped.push({ wd, reason: 'cae en tu sueño o desconexión' });
+      continue;
+    }
+    const r = place(list, start, end, wd, true);
+    if (!r.ok) {
+      res.skipped.push({ wd, reason: r.reason });
+      continue;
+    }
+    res.added.push({ wd, start, end });
+    // fechas futuras que ya tenían cambios propios
+    for (const key of Object.keys(state.plan)) {
+      if (key >= now.key && weekday(key) === wd) place(state.plan[key], start, end, wd, false);
+    }
+  }
+  return res;
+}

@@ -3,6 +3,7 @@
 
 export const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
 export const DAYS_SHORT = ['LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB', 'DOM'];
+export const DAYS_PLURAL = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábados', 'domingos'];
 export const DAYS_LETTER = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 export const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
@@ -88,3 +89,14 @@ export function relDay(key, today) {
 }
 
 export const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-3);
+
+// [6] → 'todos los domingos'; [0,2] → 'los lunes y miércoles'; [0..4] → 'entre semana'
+export function repeatLabel(days) {
+  const d = [...days].sort((a, b) => a - b);
+  if (d.length === 7) return 'todos los días';
+  if (d.join() === '0,1,2,3,4') return 'entre semana';
+  if (d.join() === '5,6') return 'los fines de semana';
+  const names = d.map((i) => DAYS_PLURAL[i]);
+  if (names.length === 1) return `todos los ${names[0]}`;
+  return `los ${names.slice(0, -1).join(', ')} y ${names[names.length - 1]}`;
+}

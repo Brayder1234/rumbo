@@ -3,8 +3,8 @@ import * as store from './store.js';
 import * as M from './model.js';
 import * as T from './time.js';
 import * as S from './sound.js';
-import { propose, applyProposal } from './scheduler.js';
-import { parseTask } from './parser.js';
+import { propose, applyProposal, addRecurring } from './scheduler.js';
+import { parseTask, parseTasks } from './parser.js';
 
 const st = () => store.state;
 const $ = (sel) => document.querySelector(sel);
@@ -70,7 +70,7 @@ function toast(msg, action) {
   const box = $('#toast');
   clearTimeout(toastTimer);
   box.innerHTML = `<div class="msg"><span>${esc(msg)}</span>${action ? `<button type="button" data-act="${action.act}" ${action.data || ''}>${esc(action.label)}</button>` : ''}</div>`;
-  toastTimer = setTimeout(() => (box.innerHTML = ''), action ? 9000 : 3500);
+  toastTimer = setTimeout(() => (box.innerHTML = ''), msg.includes('\n') ? 15000 : action ? 9000 : 3500);
 }
 
 function changed() {
@@ -587,6 +587,8 @@ function renderSheet() {
   }
   const html = SHEETS[ui.sheet.type](ui.sheet);
   sheets.innerHTML = `<div class="scrim" data-act="${ui.sheet.locked ? '' : 'closeSheet'}"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+  const tf = sheets.querySelector('form[data-form="task"]');
+  if (tf && ui.sheet.text) refreshMulti(tf);
   const first = sheets.querySelector('[autofocus]');
   if (first) setTimeout(() => first.focus(), 50);
 }
@@ -629,6 +631,7 @@ const SHEETS = {
         <button type="button" class="mic" style="margin:0;width:48px;height:48px" data-act="listen" aria-label="Dictar">${icon('mic')}</button>
       </div>
       ${sh.hint ? `<p class="hint">${esc(sh.hint)}</p>` : ''}
+      <p class="hint" data-multi style="color:var(--acctext)" hidden></p>
       <div class="section">
         <div class="ai-head" style="margin-left:4px">${icon('spark', 16)}<span>Lo que entendí (puedes cambiarlo)</span></div>
         <div class="card">
@@ -647,7 +650,7 @@ const SHEETS = {
       <div class="section"><p class="label">Prioridad</p>${prioPicker('prioridad', d.priority)}</div>
       <p class="hint" data-error style="color:var(--alta-fg)" hidden></p>
       <div class="btns">
-        <button type="submit" class="btn primary" name="go" value="place">${icon('spark', 18)}Buscarle lugar</button>
+        <button type="submit" class="btn primary" name="go" value="place">${icon('spark', 18)}<span data-go>Buscarle lugar</span></button>
       </div>
       <button type="submit" class="btn block" name="go" value="inbox">Guardar en pendientes</button>
     </form>`;
@@ -854,27 +857,58 @@ function addToInbox(task) {
   toast('Guardado en pendientes.');
 }
 
-// Agenda lo dictado sin pedir confirmación. Avisa qué hizo y deja "Deshacer".
-function autoAdd(text) {
-  const r = parseTask(text, todayKey());
-  if (!r.title) return openNewTask(text);
+// Agenda UNA tarea ya entendida y devuelve una línea para el aviso.
+function agendaOne(r) {
+  if (r.repeat) {
+    const res = addRecurring(st(), r, r.repeat, now());
+    const times = [...new Set(res.added.map((x) => `${T.fmt(x.start)} – ${T.fmt(x.end)}`))];
+    if (!res.added.length) return `${r.title} · no pude agregarlo (${res.skipped.map((x) => `${T.DAYS_PLURAL[x.wd]}: ${x.reason}`).join('; ')})`;
+    let line = `${r.title} · ${T.repeatLabel(r.repeat)}${times.length === 1 ? ` ${times[0]}` : ''}`;
+    if (res.guessed) line += ' (no dijiste la hora: tócalo para cambiarla)';
+    if (res.cut.length) line += ` · recorté ${[...new Set(res.cut.map((c) => c.title))].join(', ')}`;
+    if (res.skipped.length) line += ` · no pude ${res.skipped.map((x) => `el ${T.DAYS[x.wd].toLowerCase()} (${x.reason})`).join(', ')}`;
+    return line;
+  }
   const task = { title: r.title, duration: r.duration, due: r.due, at: r.at, priority: r.priority, area: r.area };
   const p = propose(st(), task, now());
-  store.snapshot();
   if (!p.ok) {
     st().tasks.push({ id: T.uid(), ...task, created: todayKey() });
-    changed();
-    return toast(`No encontré lugar para "${task.title}". Lo dejé en pendientes.`, { act: 'undo', label: 'Deshacer' });
+    return `${task.title} · sin lugar, quedó en pendientes`;
   }
   applyProposal(st(), p, todayKey());
-  changed();
   const moved = p.changes.filter((c) => c.type === 'move').length;
   const unplaced = p.changes.filter((c) => c.type === 'unplaced').length;
-  let msg = `Agendado: ${task.title}, ${T.relDay(p.slot.key, todayKey())} ${T.fmt(p.slot.start)} – ${T.fmt(p.slot.end)}`;
-  if (moved) msg += ` · moví ${moved} ${moved === 1 ? 'bloque' : 'bloques'}`;
-  if (unplaced) msg += ` · ${unplaced} a pendientes`;
-  if (p.note) msg += ' · esa hora no estaba libre';
-  toast(`${msg}.`, { act: 'undo', label: 'Deshacer' });
+  let line = `${task.title} · ${T.relDay(p.slot.key, todayKey())} ${T.fmt(p.slot.start)} – ${T.fmt(p.slot.end)}`;
+  if (moved) line += ` · moví ${moved} ${moved === 1 ? 'bloque' : 'bloques'}`;
+  if (unplaced) line += ` · ${unplaced} a pendientes`;
+  if (p.note) line += ' · esa hora no estaba libre';
+  return line;
+}
+
+// Agenda todo lo que se dijo (una o varias tareas, con o sin repetición), sin confirmar.
+// Un solo "Deshacer" revierte todo.
+function autoAdd(text) {
+  const tasks = parseTasks(text, todayKey()).filter((r) => r.title);
+  if (!tasks.length) return openNewTask(text);
+  store.snapshot();
+  const lines = tasks.map(agendaOne);
+  changed();
+  toast(lines.length === 1 ? `Agendado: ${lines[0]}.` : `Agendé ${lines.length} cosas:\n${lines.map((l) => `• ${l}`).join('\n')}`, { act: 'undo', label: 'Deshacer' });
+}
+
+// En la hoja de escribir: avisa si la frase trae varias tareas o una repetición
+function refreshMulti(form) {
+  const text = form.texto?.value || '';
+  const tasks = text.trim() ? parseTasks(text, todayKey()) : [];
+  const multi = tasks.length > 1 || !!(tasks[0] && tasks[0].repeat);
+  form.dataset.multi = multi ? '1' : '';
+  const hint = form.querySelector('[data-multi]');
+  if (hint) {
+    hint.hidden = !multi;
+    if (multi) hint.textContent = tasks.length > 1 ? `Entendí ${tasks.length} tareas: ${tasks.map((t) => t.title).join(', ')}. Se agendan todas juntas.` : `Se repite ${T.repeatLabel(tasks[0].repeat)}: se agrega a tu plantilla semanal.`;
+  }
+  const go = form.querySelector('[data-go]');
+  if (go) go.textContent = multi ? 'Agendar todo' : 'Buscarle lugar';
 }
 
 // ---------- escuchar (dictado) ----------
@@ -1342,6 +1376,11 @@ document.addEventListener('submit', (e) => {
     err.hidden = false;
   };
   if (form.dataset.form === 'task') {
+    if (form.dataset.multi === '1' && e.submitter?.value !== 'inbox') {
+      const text = form.texto.value;
+      closeSheet();
+      return autoAdd(text);
+    }
     const task = readTaskForm(form);
     if (!task.title) return fail('Escribe qué hay que hacer.');
     ui.sheet.task = task;
@@ -1399,6 +1438,7 @@ document.addEventListener('input', (e) => {
       const r = parseTask(t.value, todayKey());
       const f = t.form;
       if (!t.value.trim()) return;
+      refreshMulti(f);
       f.titulo.value = r.title;
       if (!r.durationGuessed) setSelect(f.duracion, r.duration);
       f.fecha.value = r.due || '';
