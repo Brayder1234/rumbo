@@ -214,7 +214,7 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 .alarm .actions { width: 100%; max-width: 420px; margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
 
 /* Aviso flotante */
-#toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); z-index: 50; display: flex; justify-content: center; pointer-events: none; }
+#toast { position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 140px); z-index: 50; display: flex; justify-content: center; pointer-events: none; }
 #toast .msg { pointer-events: auto; max-width: 560px; background: var(--ink); color: var(--bg); border-radius: 14px; padding: 12px 14px; font-size: 15px; display: flex; align-items: center; gap: 12px; animation: up 0.2s ease-out; max-height: 60vh; overflow-y: auto; }
 #toast .msg span { white-space: pre-line; }
 #toast .msg button { border: 0; background: transparent; color: inherit; font-weight: 700; min-height: 36px; padding: 0 4px; text-decoration: underline; }
@@ -225,3 +225,12 @@ svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-widt
 @media (min-width: 700px) {
   #main { padding-top: 32px; }
 }
+
+/* Micrófono escuchando */
+.mic.on { background: #E5484D; color: #FFFFFF; position: relative; }
+.mic.on::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid #E5484D; animation: pulse 1.6s ease-out infinite; }
+.stopsq { width: 20px; height: 20px; border-radius: 5px; background: #FFFFFF; display: block; }
+#voicepill { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); z-index: 15; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 18px; padding: 8px 14px; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
+#voicepill[hidden] { display: none; }
+.dotrec { width: 9px; height: 9px; border-radius: 5px; background: #E5484D; animation: blink 1s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: 0.3; } }

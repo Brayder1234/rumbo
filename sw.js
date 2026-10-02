@@ -1,9 +1,9 @@
 // Service worker: guarda la app para que abra sin internet.
 // Al publicar cambios, sube el número de CACHE.
-const CACHE = 'rumbo-v3';
+const CACHE = 'rumbo-v4';
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
-  './js/app.js', './js/model.js', './js/scheduler.js', './js/parser.js', './js/store.js', './js/sound.js', './js/time.js',
+  './js/app.js', './js/model.js', './js/scheduler.js', './js/parser.js', './js/store.js', './js/sound.js', './js/time.js', './js/voice.js', './js/gemini.js',
   './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/icon-512.png',
 ];
 

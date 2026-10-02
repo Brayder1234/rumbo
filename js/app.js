@@ -5,6 +5,8 @@ import * as T from './time.js';
 import * as S from './sound.js';
 import { propose, applyProposal, addRecurring } from './scheduler.js';
 import { parseTask, parseTasks } from './parser.js';
+import * as V from './voice.js';
+import * as G from './gemini.js';
 
 const st = () => store.state;
 const $ = (sel) => document.querySelector(sel);
@@ -481,8 +483,16 @@ function viewAjustes() {
   <section class="section">
     <p class="label">Secretaria</p>
     <div class="card">
-      ${sw('autoAdd', 'Agregar sin confirmar lo que dicto', 'Al terminar de hablar se agenda sola y te avisa qué hizo. Si algo queda mal, tócalo y lo cambias, o usa Deshacer.')}
+      ${G.getKey() ? `
+      <div class="row"><span class="grow"><span>Gemini conectado</span><span class="s">El micrófono graba y la IA entiende lo que dices.</span></span><button type="button" class="btn small" data-act="clearGemini">Quitar clave</button></div>` : `
+      <div class="row" style="flex-wrap:wrap">
+        <span class="grow" style="min-width:100%"><span>Clave de Gemini</span><span class="s">Necesaria para que el micrófono funcione en el iPhone. Sácala gratis en aistudio.google.com/apikey (puedes usar la misma del bot).</span></span>
+        <label class="sr" for="geminiKey">Clave de Gemini</label>
+        <input id="geminiKey" type="password" autocomplete="off" placeholder="Pega tu clave aquí" class="inline-select" style="flex:1;min-width:0">
+        <button type="button" class="btn small soft" data-act="saveGemini">Guardar</button>
+      </div>`}
     </div>
+    <p class="hint">Lo que dices se agenda solo, sin confirmar. Tu clave se guarda solo en este dispositivo. El audio se envía a Google para entenderlo; en el plan gratis Google puede usarlo para mejorar sus modelos.</p>
   </section>
 
   <section class="section">
@@ -556,7 +566,7 @@ function renderTabbar() {
   tabbar.innerHTML = `<div class="in">
     ${t('hoy', 'Hoy', 'sun')}
     ${t('semana', 'Semana', 'cal')}
-    <button type="button" class="mic" data-act="listen" aria-label="Hablar con tu secretaria">${icon('mic')}</button>
+    <button type="button" class="mic${voice.on ? ' on' : ''}" data-act="listen" aria-pressed="${voice.on}" aria-label="${voice.on ? 'Dejar de escuchar' : 'Hablar con tu secretaria'}">${voice.on ? '<span class="stopsq"></span>' : icon('mic')}</button>
     ${t('sueno', 'Sueño', 'moon')}
     ${t('revision', 'Revisión', 'chart')}
   </div>`;
@@ -889,7 +899,11 @@ function agendaOne(r) {
 // Un solo "Deshacer" revierte todo.
 function autoAdd(text) {
   const tasks = parseTasks(text, todayKey()).filter((r) => r.title);
-  if (!tasks.length) return openNewTask(text);
+  if (!tasks.length) return toast(`No entendí una tarea en: "${text}"`);
+  saveTasks(tasks);
+}
+
+function saveTasks(tasks) {
   store.snapshot();
   const lines = tasks.map(agendaOne);
   changed();
@@ -911,62 +925,135 @@ function refreshMulti(form) {
   if (go) go.textContent = multi ? 'Agendar todo' : 'Buscarle lugar';
 }
 
-// ---------- escuchar (dictado) ----------
+// ---------- micrófono manos libres ----------
+// Un toque: empieza a escuchar. Cada vez que haces una pausa, guarda lo que dijiste.
+// Otro toque: deja de escuchar. No abre ningún panel; solo avisos cortos.
+// Con clave de Gemini: graba el audio y Gemini lo entiende (funciona en el iPhone instalado).
+// Sin clave: usa el dictado del navegador (sirve en la Mac; en el iPhone casi nunca).
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voice = { on: false, mode: null, mic: null, rec: null, busy: 0, last: 0, timer: null };
 
-function startListening() {
-  S.unlock();
-  if (!Recognition) {
-    openNewTask('', 'Tu navegador no deja dictar aquí. Toca el campo y usa el micrófono del teclado.');
-    return;
-  }
-  const rec = new Recognition();
-  rec.lang = 'es-CO';
-  rec.interimResults = true;
-  rec.continuous = false;
-  ui.listening = { rec, text: '', error: '' };
-  renderListening();
-  rec.onresult = (e) => {
-    ui.listening.text = Array.from(e.results).map((r) => r[0].transcript).join(' ');
-    const p = overlay.querySelector('.transcript');
-    if (p) p.textContent = ui.listening.text ? `“${ui.listening.text}”` : '';
-  };
-  rec.onerror = (e) => {
-    if (!ui.listening) return;
-    ui.listening.error = e.error === 'not-allowed' || e.error === 'service-not-allowed'
-      ? 'Rumbo no tiene permiso para usar el micrófono. Actívalo en los ajustes del navegador.'
-      : e.error === 'no-speech' ? 'No te escuché. Intenta otra vez.' : 'No se pudo escuchar. Intenta otra vez o escríbelo.';
-  };
-  rec.onend = () => {
-    const l = ui.listening;
-    ui.listening = null;
-    overlay.innerHTML = '';
-    if (!l || l.cancelled) return;
-    if (!l.text.trim()) openNewTask('', l.error || 'No te escuché. Escríbelo o intenta otra vez.');
-    else if (st().settings.autoAdd) autoAdd(l.text.trim());
-    else openNewTask(l.text.trim());
-  };
+function voiceCtx() {
+  return { today: todayKey(), nowMin: T.nowMin(), areas: st().areas };
+}
+
+async function handleSegment(samples, rate) {
+  voice.busy++;
+  voice.last = Date.now();
+  renderVoice();
   try {
-    rec.start();
+    const b64 = V.toBase64(V.encodeWav(samples, rate));
+    const r = await G.understandAudio(b64, voiceCtx());
+    if (r.tasks.length) saveTasks(r.tasks);
+    else if (r.transcript.trim()) toast(`No entendí una tarea en: "${r.transcript.trim()}"`);
   } catch (e) {
-    ui.listening = null;
-    overlay.innerHTML = '';
-    openNewTask('', 'No se pudo usar el micrófono. Escríbelo aquí.');
+    const msg = {
+      'sin-clave': 'Falta tu clave de Gemini en Ajustes › Secretaria.',
+      clave: 'Gemini no aceptó tu clave. Revísala en Ajustes › Secretaria.',
+      cupo: 'Se acabó el cupo gratis de Gemini por ahora. Intenta en unos minutos.',
+      respuesta: 'Gemini respondió algo que no entendí. Dilo otra vez.',
+    }[e.message] || 'No pude procesar lo que dijiste (¿sin internet?). Dilo otra vez.';
+    toast(msg);
+  } finally {
+    voice.busy--;
+    renderVoice();
   }
 }
 
-function renderListening() {
-  overlay.innerHTML = `
-  <div class="overlay listen">
-    <div class="panel" role="dialog" aria-label="Te escucho">
-      <span style="width:40px;height:5px;border-radius:3px;background:var(--line)"></span>
-      <span class="eyebrow" style="color:var(--acctext)">Te escucho</span>
-      <div class="eq" aria-hidden="true">${'<span></span>'.repeat(11)}</div>
-      <p class="transcript" aria-live="polite"></p>
-      <span class="small muted" style="text-align:center">Dime qué tienes que hacer, para cuándo y cuánto te toma.</span>
-      <div class="btns" style="width:100%"><button type="button" class="btn" data-act="cancelListen">Cancelar</button><button type="button" class="btn primary" data-act="stopListen">Listo</button></div>
-    </div>
-  </div>`;
+async function startVoice() {
+  S.unlock();
+  closeSheet();
+  if (G.getKey() && navigator.mediaDevices?.getUserMedia) {
+    try {
+      voice.mic = await V.startMic(handleSegment);
+    } catch (e) {
+      return toast(e && e.name === 'NotAllowedError'
+        ? 'Rumbo no tiene permiso para el micrófono. En el iPhone: Ajustes › Safari › Micrófono › Permitir.'
+        : 'No se pudo abrir el micrófono.');
+    }
+    voice.mode = 'gemini';
+  } else if (Recognition) {
+    const rec = new Recognition();
+    rec.lang = 'es-CO';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const text = e.results[i].isFinal ? e.results[i][0].transcript.trim() : '';
+        if (text) {
+          voice.last = Date.now();
+          autoAdd(text);
+        }
+      }
+    };
+    rec.onerror = (e) => {
+      if (e.error !== 'no-speech' && e.error !== 'aborted') voice.error = e.error;
+    };
+    rec.onend = () => {
+      if (voice.on && !voice.error) {
+        try {
+          return rec.start(); // el navegador corta solo; se reanuda mientras sigas en modo escucha
+        } catch (e) { /* no se pudo reanudar */ }
+      }
+      const err = voice.error;
+      stopVoice(true);
+      if (err) toast(G.getKey() ? 'El dictado falló. Intenta otra vez.' : 'El dictado del navegador no funciona aquí. Pon tu clave de Gemini en Ajustes › Secretaria y el micrófono funcionará.');
+    };
+    voice.rec = rec;
+    voice.error = null;
+    voice.mode = 'browser';
+    try {
+      rec.start();
+    } catch (e) {
+      return toast('No se pudo usar el micrófono.');
+    }
+  } else {
+    return toast('Para usar el micrófono aquí, pon tu clave de Gemini en Ajustes › Secretaria.', { act: 'tab', label: 'Ir', data: 'data-tab="ajustes"' });
+  }
+  voice.on = true;
+  voice.last = Date.now();
+  clearInterval(voice.timer);
+  // si pasa un minuto sin que digas nada, deja de escuchar solo
+  voice.timer = setInterval(() => {
+    if (voice.on && !voice.busy && Date.now() - voice.last > 60000) {
+      stopVoice();
+      toast('Dejé de escuchar.');
+    }
+  }, 5000);
+  renderVoice();
+}
+
+function stopVoice(silent) {
+  voice.on = false;
+  clearInterval(voice.timer);
+  if (voice.mic) voice.mic.stop(); // entrega lo último que estabas diciendo
+  voice.mic = null;
+  if (voice.rec) {
+    try { voice.rec.stop(); } catch (e) { /* ya parado */ }
+  }
+  voice.rec = null;
+  renderVoice();
+  if (!silent && !voice.busy) toast('Listo, dejé de escuchar.');
+}
+
+function renderVoice() {
+  const mic = tabbar.querySelector('.mic');
+  if (mic) {
+    mic.classList.toggle('on', voice.on);
+    mic.innerHTML = voice.on ? '<span class="stopsq"></span>' : icon('mic');
+    mic.setAttribute('aria-pressed', String(voice.on));
+    mic.setAttribute('aria-label', voice.on ? 'Dejar de escuchar' : 'Hablar con tu secretaria');
+  }
+  let pill = document.getElementById('voicepill');
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'voicepill';
+    pill.setAttribute('role', 'status');
+    document.body.appendChild(pill);
+  }
+  const text = voice.busy ? 'Guardando lo que dijiste…' : voice.on ? 'Te escucho · toca el micrófono para terminar' : '';
+  pill.hidden = !text;
+  pill.innerHTML = text ? `<span class="dotrec"></span>${esc(text)}` : '';
 }
 
 // ---------- alarmas ----------
@@ -1086,18 +1173,20 @@ const ACT = {
     openNewTask();
   },
   listen() {
-    closeSheet();
-    startListening();
+    if (voice.on) stopVoice();
+    else startVoice();
   },
-  stopListen() {
-    ui.listening?.rec.stop();
+  saveGemini() {
+    const v = $('#geminiKey')?.value.trim();
+    if (!v) return toast('Pega tu clave primero.');
+    G.setKey(v);
+    render();
+    toast('Clave guardada en este dispositivo.');
   },
-  cancelListen() {
-    if (ui.listening) {
-      ui.listening.cancelled = true;
-      ui.listening.rec.abort();
-    }
-    overlay.innerHTML = '';
+  clearGemini() {
+    G.setKey('');
+    render();
+    toast('Clave borrada.');
   },
   logSleep(d) {
     st().sleepLog[todayKey()] = Number(d.h);
@@ -1496,13 +1585,14 @@ document.addEventListener('change', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (ui.alarm) return ACT.alarmStart();
-    if (ui.listening) return ACT.cancelListen();
+    if (voice.on) return stopVoice();
     if (ui.sheet && !ui.sheet.locked) closeSheet();
   }
 });
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') tick();
+  else if (voice.on) stopVoice(true); // al salir de la app se suelta el micrófono
 });
 
 // ---------- arranque ----------
